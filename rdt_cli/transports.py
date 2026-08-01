@@ -17,9 +17,11 @@ from .exceptions import (
     RateLimitError,
     RedditApiError,
     SessionExpiredError,
+    WriteBlockedError,
 )
 from .fingerprint import BrowserFingerprint
 from .session import SessionState
+from .write_gate import WriteAuthorization
 
 logger = logging.getLogger(__name__)
 
@@ -168,10 +170,39 @@ class ReadTransport(BaseTransport):
 class WriteTransport(BaseTransport):
     """Transport for state-changing authenticated requests."""
 
+    def __init__(
+        self,
+        session: SessionState,
+        *,
+        config: RuntimeConfig,
+        fingerprint: BrowserFingerprint,
+        request_delay: float,
+        authorization: WriteAuthorization | None = None,
+    ) -> None:
+        super().__init__(
+            session,
+            config=config,
+            fingerprint=fingerprint,
+            request_delay=request_delay,
+        )
+        self._authorization = authorization
+        self._authorization_used = False
+
     def default_headers(self) -> dict[str, str]:
         return self.fingerprint.write_headers(modhash=self.session.modhash)
 
     def request(self, method: str, url: str, **kwargs: Any) -> Any:
+        if set(kwargs) != {"data"}:
+            raise WriteBlockedError("Reddit write contains unauthorized request options")
+        data = kwargs.get("data")
+        if self._authorization is None:
+            raise WriteBlockedError()
+        if self._authorization_used:
+            raise WriteBlockedError("Reddit write authorization has already been used")
+        if not isinstance(data, dict) or not self._authorization.allows(method, url, data):
+            raise WriteBlockedError("Reddit write does not match the authorized request")
+
+        self._authorization_used = True
         if not self.session.can_write:
             raise RedditApiError("Session is not write-capable yet; run 'rdt status' or 'rdt whoami' to validate")
 
@@ -179,7 +210,6 @@ class WriteTransport(BaseTransport):
         headers.update(self.fingerprint.write_headers(modhash=self.session.modhash))
         kwargs["headers"] = headers
 
-        data = kwargs.get("data")
         if isinstance(data, dict) and self.session.modhash and "uh" not in data:
             kwargs["data"] = {**data, "uh": self.session.modhash}
 
