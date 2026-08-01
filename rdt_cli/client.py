@@ -35,6 +35,7 @@ from .exceptions import (
 from .fingerprint import BrowserFingerprint
 from .session import SessionState
 from .transports import ReadTransport, WriteTransport
+from .write_gate import WriteAuthorization
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +57,13 @@ class RedditClient:
         timeout: float = 30.0,
         request_delay: float = 1.0,
         max_retries: int = 3,
+        write_authorization: WriteAuthorization | None = None,
     ):
         self.credential = credential
         self._timeout = timeout
         self._request_delay = request_delay
         self._max_retries = max_retries
+        self._write_authorization = write_authorization
         self._config = RuntimeConfig(
             timeout=timeout,
             read_request_delay=request_delay,
@@ -92,6 +95,7 @@ class RedditClient:
             config=self._config,
             fingerprint=self._fingerprint,
             request_delay=self._config.write_request_delay,
+            authorization=self._write_authorization,
         )
         self._http = self._read_transport.client
         return self

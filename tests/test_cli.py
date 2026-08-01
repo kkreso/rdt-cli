@@ -101,6 +101,8 @@ class TestAuthCommands:
             data = json.loads(result.output)
             assert data["ok"] is True
             assert data["data"]["authenticated"] is False
+            assert data["data"]["write_policy"] == "interactive_confirmation"
+            assert data["data"]["write_enabled"] is False
 
     def test_status_json_authenticated(self):
         from rdt_cli.auth import Credential
@@ -120,6 +122,8 @@ class TestAuthCommands:
                 assert data["data"]["cookie_count"] == 2
                 assert data["data"]["username"] == "spez"
                 assert data["data"]["capabilities"] == ["read", "write"]
+                assert data["data"]["write_policy"] == "interactive_confirmation"
+                assert data["data"]["write_enabled"] is False
 
     def test_login_already_authenticated(self):
         from rdt_cli.auth import Credential
