@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from .config import RuntimeConfig
-from .constants import BASE_URL
+from .constants import AUTH_COOKIE_NAMES, BASE_URL
 from .exceptions import (
     ForbiddenError,
     NotFoundError,
@@ -22,6 +22,15 @@ from .fingerprint import BrowserFingerprint
 from .session import SessionState
 
 logger = logging.getLogger(__name__)
+
+
+def _scoped_reddit_cookies(cookies: dict[str, str]) -> httpx.Cookies:
+    """Build a cookie jar that cannot send authentication cookies off Reddit."""
+    jar = httpx.Cookies()
+    for name, value in cookies.items():
+        if name in AUTH_COOKIE_NAMES and value:
+            jar.set(name, value, domain=".reddit.com", path="/")
+    return jar
 
 
 class BaseTransport:
@@ -45,8 +54,8 @@ class BaseTransport:
         self._http = httpx.Client(
             base_url=BASE_URL,
             headers=self.default_headers(),
-            cookies=session.cookies,
-            follow_redirects=True,
+            cookies=_scoped_reddit_cookies(session.cookies),
+            follow_redirects=False,
             timeout=httpx.Timeout(config.timeout),
         )
 
@@ -76,13 +85,18 @@ class BaseTransport:
 
     def _merge_response_cookies(self, resp: httpx.Response) -> None:
         for name, value in resp.cookies.items():
-            if not value:
+            if name not in AUTH_COOKIE_NAMES or not value:
                 continue
-            self.client.cookies.set(name, value)
             self.session.cookies[name] = value
         self.session.refresh_capabilities()
 
+    def _validate_request_target(self, url: str) -> None:
+        target = self.client.base_url.join(url)
+        if target.scheme != "https" or target.host != self.client.base_url.host:
+            raise RedditApiError(f"Refusing request outside {self.client.base_url.host}")
+
     def request(self, method: str, url: str, **kwargs: Any) -> Any:
+        self._validate_request_target(url)
         self._rate_limit_delay()
         last_exc: Exception | None = None
 
@@ -91,6 +105,8 @@ class BaseTransport:
             try:
                 resp = self.client.request(method, url, **kwargs)
                 elapsed = time.time() - t0
+                if resp.is_redirect:
+                    raise RedditApiError("Reddit returned a redirect; refusing to forward credentials")
                 self._merge_response_cookies(resp)
                 self._request_count += 1
                 self._last_request_time = time.time()
