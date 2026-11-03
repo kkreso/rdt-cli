@@ -29,6 +29,13 @@ class AuthRequiredError(RedditApiError):
         super().__init__("Not logged in. Use 'rdt login' to authenticate")
 
 
+class WriteBlockedError(RedditApiError):
+    """Raised when a Reddit write lacks exact, interactive authorization."""
+
+    def __init__(self, message: str = "Reddit write blocked by read-only policy"):
+        super().__init__(message)
+
+
 class RateLimitError(RedditApiError):
     """Raised when Reddit rate-limits the request."""
 
@@ -58,6 +65,8 @@ def error_code_for_exception(exc: Exception) -> str:
     """Map domain exceptions to stable error code strings."""
     if isinstance(exc, (AuthRequiredError, SessionExpiredError)):
         return "not_authenticated"
+    if isinstance(exc, WriteBlockedError):
+        return "write_blocked"
     if isinstance(exc, RateLimitError):
         return "rate_limited"
     if isinstance(exc, NotFoundError):

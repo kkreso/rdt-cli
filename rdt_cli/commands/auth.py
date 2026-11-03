@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from ..write_gate import WRITE_POLICY
 from ._common import (
     console,
     handle_command,
@@ -49,7 +50,6 @@ def status(as_json: bool, as_yaml: bool) -> None:
     from ..auth import CREDENTIAL_FILE, get_credential
     from ..client import RedditClient
     from ..session import summarize_session
-
     cred = get_credential()
     state = summarize_session(RedditClient(cred).session)
     info = {
@@ -62,6 +62,8 @@ def status(as_json: bool, as_yaml: bool) -> None:
         "modhash_present": state.modhash_present,
         "last_verified_at": state.last_verified_at,
         "error": state.error,
+        "write_policy": WRITE_POLICY,
+        "write_enabled": False,
     }
 
     if cred:
@@ -134,6 +136,8 @@ def whoami(as_json: bool, as_yaml: bool) -> None:
         profile["_session"] = {
             "capabilities": sorted(client.session.capabilities),
             "modhash_present": bool(client.session.modhash),
+            "write_policy": WRITE_POLICY,
+            "write_enabled": False,
         }
         return profile
 

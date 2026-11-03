@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import platform
-import subprocess
 import sys
+import webbrowser
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, TypeVar
@@ -385,16 +384,5 @@ def write_delay() -> None:
 
 def open_url(url: str) -> None:
     """Open a URL in the default browser."""
-    system = platform.system()
-    try:
-        if system == "Darwin":
-            subprocess.run(["open", url], check=True)
-        elif system == "Linux":
-            subprocess.run(["xdg-open", url], check=True)
-        elif system == "Windows":
-            subprocess.run(["start", url], check=True, shell=True)
-        else:
-            click.echo(url)
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    if not webbrowser.open(url):
         click.echo(url)
-

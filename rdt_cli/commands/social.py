@@ -5,8 +5,10 @@ from __future__ import annotations
 import click
 
 from ..client import RedditClient
+from ..constants import COMMENT_URL, SAVE_URL, SUBSCRIBE_URL, UNSAVE_URL, VOTE_URL
 from ..exceptions import RedditApiError
 from ..index_cache import get_item_by_index
+from ..write_gate import authorize_write
 from ._common import console, exit_for_error, require_auth, write_delay
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -60,14 +62,22 @@ def upvote(id_or_index: str, undo: bool, down: bool) -> None:
       rdt upvote 3 --down    # downvote
       rdt upvote 3 --undo    # remove vote
     """
-    cred = require_auth()
     try:
-        with RedditClient(cred) as client:
+        fullname = _resolve_fullname(id_or_index)
+        if not fullname:
+            return
+        direction = 0 if undo else (-1 if down else 1)
+        operation = "unvote" if undo else ("downvote" if down else "upvote")
+        data = {"id": fullname, "dir": str(direction)}
+        authorization = authorize_write(
+            operation=operation,
+            target=fullname,
+            endpoint=VOTE_URL,
+            data=data,
+        )
+        cred = require_auth()
+        with RedditClient(cred, write_authorization=authorization) as client:
             client.validate_session()
-            fullname = _resolve_fullname(id_or_index)
-            if not fullname:
-                return
-            direction = 0 if undo else (-1 if down else 1)
             action_label = "Unvoted" if undo else ("⬇ Downvoted" if down else "⬆ Upvoted")
             client.vote(fullname, direction=direction)
         write_delay()
@@ -89,13 +99,22 @@ def save(id_or_index: str, undo: bool) -> None:
       rdt save 3           # save result #3
       rdt save 3 --undo    # unsave
     """
-    cred = require_auth()
     try:
-        with RedditClient(cred) as client:
+        fullname = _resolve_fullname(id_or_index)
+        if not fullname:
+            return
+        operation = "unsave" if undo else "save"
+        endpoint = UNSAVE_URL if undo else SAVE_URL
+        data = {"id": fullname}
+        authorization = authorize_write(
+            operation=operation,
+            target=fullname,
+            endpoint=endpoint,
+            data=data,
+        )
+        cred = require_auth()
+        with RedditClient(cred, write_authorization=authorization) as client:
             client.validate_session()
-            fullname = _resolve_fullname(id_or_index)
-            if not fullname:
-                return
             if undo:
                 client.unsave_item(fullname)
                 write_delay()
@@ -121,12 +140,20 @@ def subscribe(subreddit: str, undo: bool) -> None:
       rdt subscribe python
       rdt subscribe python --undo
     """
-    cred = require_auth()
     action = "unsub" if undo else "sub"
     label = "Unsubscribed from" if undo else "Subscribed to"
 
     try:
-        with RedditClient(cred) as client:
+        operation = "unsubscribe" if undo else "subscribe"
+        data = {"sr_name": subreddit, "action": action}
+        authorization = authorize_write(
+            operation=operation,
+            target=f"r/{subreddit}",
+            endpoint=SUBSCRIBE_URL,
+            data=data,
+        )
+        cred = require_auth()
+        with RedditClient(cred, write_authorization=authorization) as client:
             client.validate_session()
             client.subscribe(subreddit, action=action)
         write_delay()
@@ -148,13 +175,20 @@ def comment(id_or_index: str, text: str) -> None:
       rdt comment 3 "Great post!"
       rdt comment 1abc123 "Thanks for sharing"
     """
-    cred = require_auth()
     try:
-        with RedditClient(cred) as client:
+        fullname = _resolve_fullname(id_or_index)
+        if not fullname:
+            return
+        data = {"parent": fullname, "text": text}
+        authorization = authorize_write(
+            operation="comment",
+            target=f"{fullname}: {text}",
+            endpoint=COMMENT_URL,
+            data=data,
+        )
+        cred = require_auth()
+        with RedditClient(cred, write_authorization=authorization) as client:
             client.validate_session()
-            fullname = _resolve_fullname(id_or_index)
-            if not fullname:
-                return
             client.post_comment(fullname, text)
         write_delay()
         console.print(f"[green]✅ Comment posted[/green] on {fullname}")

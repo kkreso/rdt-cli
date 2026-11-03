@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -100,6 +101,8 @@ class TestAuthCommands:
             data = json.loads(result.output)
             assert data["ok"] is True
             assert data["data"]["authenticated"] is False
+            assert data["data"]["write_policy"] == "interactive_confirmation"
+            assert data["data"]["write_enabled"] is False
 
     def test_status_json_authenticated(self):
         from rdt_cli.auth import Credential
@@ -119,6 +122,8 @@ class TestAuthCommands:
                 assert data["data"]["cookie_count"] == 2
                 assert data["data"]["username"] == "spez"
                 assert data["data"]["capabilities"] == ["read", "write"]
+                assert data["data"]["write_policy"] == "interactive_confirmation"
+                assert data["data"]["write_enabled"] is False
 
     def test_login_already_authenticated(self):
         from rdt_cli.auth import Credential
@@ -245,6 +250,63 @@ class TestCredential:
         assert loaded.cookies["reddit_session"] == "test_val"
         assert loaded.source == "browser:chrome"
         assert loaded.username == "spez"
+        assert (tmp_path.stat().st_mode & 0o777) == 0o700
+        assert ((tmp_path / "cred.json").stat().st_mode & 0o777) == 0o600
+
+    def test_browser_cookie_filter_keeps_only_auth_cookies(self, monkeypatch):
+        from rdt_cli import auth
+
+        class Cookie:
+            def __init__(self, name, value):
+                self.name = name
+                self.value = value
+
+        class BrowserCookie3:
+            @staticmethod
+            def chrome(domain_name):
+                assert domain_name == ".reddit.com"
+                return [Cookie("reddit_session", "session"), Cookie("tracking", "tracker")]
+
+            firefox = edge = brave = chrome
+
+        monkeypatch.setitem(sys.modules, "browser_cookie3", BrowserCookie3)
+        monkeypatch.setattr(auth, "save_credential", lambda credential: None)
+
+        cred = auth._extract_direct()
+
+        assert cred is not None
+        assert cred.cookies == {"reddit_session": "session"}
+
+    def test_subprocess_extraction_uses_installed_python_and_filters_output(self, monkeypatch):
+        from rdt_cli import auth
+
+        completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"reddit_session": "session", "tracking": "tracker"}',
+            },
+        )()
+        run = patch("rdt_cli.auth.subprocess.run", return_value=completed)
+        monkeypatch.setattr(auth, "save_credential", lambda credential: None)
+
+        with run as mock_run:
+            cred = auth._extract_subprocess()
+
+        assert cred is not None
+        assert cred.cookies == {"reddit_session": "session"}
+        assert mock_run.call_args.args[0][0] == sys.executable
+        assert "uv" not in mock_run.call_args.args[0]
+
+    def test_open_url_uses_webbrowser_without_a_shell(self):
+        from rdt_cli.commands._common import open_url
+
+        url = 'https://reddit.com/comments/test?value="&whoami&"'
+        with patch("rdt_cli.commands._common.webbrowser.open", return_value=True) as browser_open:
+            open_url(url)
+
+        browser_open.assert_called_once_with(url)
 
     def test_load_no_file(self, tmp_path, monkeypatch):
         from rdt_cli import auth
@@ -971,4 +1033,3 @@ class TestReadCompact:
         result = runner.invoke(cli, ["show", "--help"])
         assert result.exit_code == 0
         assert "--compact" in result.output
-

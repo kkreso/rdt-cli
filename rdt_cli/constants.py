@@ -70,6 +70,7 @@ HEADERS = {
 
 # ── Cookie keys required for authenticated sessions ─────────────────
 REQUIRED_COOKIES = {"reddit_session"}
+AUTH_COOKIE_NAMES = REQUIRED_COOKIES | {"csrf_token", "modhash"}
 
 # ── Sort options ────────────────────────────────────────────────────
 SORT_OPTIONS = ["hot", "new", "top", "rising", "controversial", "best"]

@@ -25,7 +25,7 @@ error:
 - `--json` and `--yaml` both use this envelope
 - non-TTY stdout defaults to YAML
 - reading and search commands return their payload under `data`
-- `status` returns `data.authenticated` plus `data.cookie_count`
+- `status` returns `data.authenticated`, `data.cookie_count`, `data.write_policy`, and `data.write_enabled`
 - `whoami` returns `data.user`
-- common `error.code` values include `not_authenticated`, `rate_limited`, `not_found`, `forbidden`, and `api_error`
+- common `error.code` values include `not_authenticated`, `write_blocked`, `rate_limited`, `not_found`, `forbidden`, and `api_error`
 - set `OUTPUT=yaml|json|rich|auto` environment variable to override default format

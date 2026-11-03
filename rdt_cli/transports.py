@@ -10,18 +10,29 @@ from typing import Any
 import httpx
 
 from .config import RuntimeConfig
-from .constants import BASE_URL
+from .constants import AUTH_COOKIE_NAMES, BASE_URL
 from .exceptions import (
     ForbiddenError,
     NotFoundError,
     RateLimitError,
     RedditApiError,
     SessionExpiredError,
+    WriteBlockedError,
 )
 from .fingerprint import BrowserFingerprint
 from .session import SessionState
+from .write_gate import WriteAuthorization
 
 logger = logging.getLogger(__name__)
+
+
+def _scoped_reddit_cookies(cookies: dict[str, str]) -> httpx.Cookies:
+    """Build a cookie jar that cannot send authentication cookies off Reddit."""
+    jar = httpx.Cookies()
+    for name, value in cookies.items():
+        if name in AUTH_COOKIE_NAMES and value:
+            jar.set(name, value, domain=".reddit.com", path="/")
+    return jar
 
 
 class BaseTransport:
@@ -45,8 +56,8 @@ class BaseTransport:
         self._http = httpx.Client(
             base_url=BASE_URL,
             headers=self.default_headers(),
-            cookies=session.cookies,
-            follow_redirects=True,
+            cookies=_scoped_reddit_cookies(session.cookies),
+            follow_redirects=False,
             timeout=httpx.Timeout(config.timeout),
         )
 
@@ -76,13 +87,18 @@ class BaseTransport:
 
     def _merge_response_cookies(self, resp: httpx.Response) -> None:
         for name, value in resp.cookies.items():
-            if not value:
+            if name not in AUTH_COOKIE_NAMES or not value:
                 continue
-            self.client.cookies.set(name, value)
             self.session.cookies[name] = value
         self.session.refresh_capabilities()
 
+    def _validate_request_target(self, url: str) -> None:
+        target = self.client.base_url.join(url)
+        if target.scheme != "https" or target.host != self.client.base_url.host:
+            raise RedditApiError(f"Refusing request outside {self.client.base_url.host}")
+
     def request(self, method: str, url: str, **kwargs: Any) -> Any:
+        self._validate_request_target(url)
         self._rate_limit_delay()
         last_exc: Exception | None = None
 
@@ -91,6 +107,8 @@ class BaseTransport:
             try:
                 resp = self.client.request(method, url, **kwargs)
                 elapsed = time.time() - t0
+                if resp.is_redirect:
+                    raise RedditApiError("Reddit returned a redirect; refusing to forward credentials")
                 self._merge_response_cookies(resp)
                 self._request_count += 1
                 self._last_request_time = time.time()
@@ -152,10 +170,39 @@ class ReadTransport(BaseTransport):
 class WriteTransport(BaseTransport):
     """Transport for state-changing authenticated requests."""
 
+    def __init__(
+        self,
+        session: SessionState,
+        *,
+        config: RuntimeConfig,
+        fingerprint: BrowserFingerprint,
+        request_delay: float,
+        authorization: WriteAuthorization | None = None,
+    ) -> None:
+        super().__init__(
+            session,
+            config=config,
+            fingerprint=fingerprint,
+            request_delay=request_delay,
+        )
+        self._authorization = authorization
+        self._authorization_used = False
+
     def default_headers(self) -> dict[str, str]:
         return self.fingerprint.write_headers(modhash=self.session.modhash)
 
     def request(self, method: str, url: str, **kwargs: Any) -> Any:
+        if set(kwargs) != {"data"}:
+            raise WriteBlockedError("Reddit write contains unauthorized request options")
+        data = kwargs.get("data")
+        if self._authorization is None:
+            raise WriteBlockedError()
+        if self._authorization_used:
+            raise WriteBlockedError("Reddit write authorization has already been used")
+        if not isinstance(data, dict) or not self._authorization.allows(method, url, data):
+            raise WriteBlockedError("Reddit write does not match the authorized request")
+
+        self._authorization_used = True
         if not self.session.can_write:
             raise RedditApiError("Session is not write-capable yet; run 'rdt status' or 'rdt whoami' to validate")
 
@@ -163,7 +210,6 @@ class WriteTransport(BaseTransport):
         headers.update(self.fingerprint.write_headers(modhash=self.session.modhash))
         kwargs["headers"] = headers
 
-        data = kwargs.get("data")
         if isinstance(data, dict) and self.session.modhash and "uh" not in data:
             kwargs["data"] = {**data, "uh": self.session.modhash}
 
