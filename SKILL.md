@@ -13,7 +13,7 @@ tags:
 # rdt-cli — Reddit CLI Tool
 
 **Binary:** `rdt`
-**Credentials:** browser cookies (auto-extracted via browser-cookie3)
+**Credentials:** `reddit_session` cookie from `RDT_SESSION`/`RDT_COOKIE` or `~/.config/rdt-cli/credential.json`; never read from browsers
 
 ## Setup
 
@@ -49,11 +49,7 @@ If `AUTH_NEEDED`, proceed to Step 1.
 
 ### Step 1: Guide user to authenticate
 
-Ensure user is logged into reddit.com in a supported browser (Chrome, Firefox, Edge, Brave, Arc, Chromium, Opera, Vivaldi, Safari, LibreWolf). Then:
-
-```bash
-rdt login
-```
+Ask the user to provide the `reddit_session` cookie themselves, in their own terminal: `export RDT_SESSION=...`, or the credential file (`rdt login` prints both options). Never handle the value.
 
 Verify with:
 
@@ -66,9 +62,7 @@ rdt whoami --json | jq '.data.name // .data._session.username'
 
 | Symptom | Agent action |
 |---------|-------------|
-| `No Reddit cookies found` | Guide user to login to reddit.com in browser |
-| `Session expired` | Run `rdt logout && rdt login` |
-| `database is locked` | Close browser, then retry |
+| `not_authenticated` / `Session expired` | Ask the user to refresh `reddit_session` (Step 1) |
 
 ## Agent Defaults
 
@@ -140,7 +134,7 @@ These commands require a fresh randomized TTY phrase. Authorization is single-us
 
 | Command | Description |
 |---------|-------------|
-| `rdt login` | Extract cookies from browser |
+| `rdt login` | Show how to provide cookies |
 | `rdt logout` | Clear cached cookies |
 | `rdt status` | Check authentication status |
 | `rdt whoami` | View detailed profile info |
@@ -255,6 +249,5 @@ Structured error codes returned in the `error.code` field (see [SCHEMA.md](./SCH
 ## Safety Notes
 
 - Do not ask users to share raw cookie values in chat logs
-- Prefer browser cookie extraction over manual secret copy/paste
-- If auth fails, ask the user to re-login via `rdt login`
+- If auth fails, ask the user to refresh `reddit_session` themselves (Step 1)
 - Built-in rate-limit delay protects accounts; do not bypass it

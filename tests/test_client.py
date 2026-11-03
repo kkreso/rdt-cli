@@ -105,9 +105,19 @@ def test_transport_rejects_cross_origin_request_before_network() -> None:
     transport = _read_transport()
     try:
         with patch.object(transport.client, "request") as request:
-            with pytest.raises(RedditApiError, match="outside www.reddit.com"):
+            with pytest.raises(RedditApiError, match="Refusing request to example.invalid"):
                 transport.request("GET", "https://example.invalid/steal")
             request.assert_not_called()
+    finally:
+        transport.close()
+
+
+def test_transport_allows_api_host_and_rejects_plain_http() -> None:
+    transport = _read_transport()
+    try:
+        transport._validate_request_target("https://api.reddit.com/search")
+        with pytest.raises(RedditApiError, match="Refusing request"):
+            transport._validate_request_target("http://api.reddit.com/search")
     finally:
         transport.close()
 

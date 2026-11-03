@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from unittest.mock import patch
 
 import pytest
@@ -133,22 +132,12 @@ class TestAuthCommands:
             assert result.exit_code == 0
             assert "Already" in result.output or "✅" in result.output
 
-    def test_login_not_authenticated_no_browser(self):
+    def test_login_not_authenticated_prints_setup_steps(self):
         with patch("rdt_cli.auth.get_credential", return_value=None):
-            with patch("rdt_cli.auth.extract_browser_credential", return_value=None):
-                result = runner.invoke(cli, ["login"])
-                assert result.exit_code == 0
-                assert "No Reddit" in result.output or "❌" in result.output
-
-    def test_login_success_from_browser(self):
-        from rdt_cli.auth import Credential
-        cred = Credential(cookies={"reddit_session": "abc", "loid": "xyz"})
-        with patch("rdt_cli.auth.get_credential", return_value=None):
-            with patch("rdt_cli.auth.extract_browser_credential", return_value=cred):
-                result = runner.invoke(cli, ["login"])
-                assert result.exit_code == 0
-                assert "✅" in result.output
-                assert "2 cookies" in result.output
+            result = runner.invoke(cli, ["login"])
+            assert result.exit_code == 0
+            assert "disabled" in result.output
+            assert "RDT_SESSION" in result.output
 
     def test_logout(self):
         with patch("rdt_cli.auth.clear_credential") as mock_clear:
@@ -200,11 +189,15 @@ class TestConstants:
         assert MAX_LIMIT == 100
 
     def test_endpoints_contain_json(self):
-        from rdt_cli.constants import ALL_URL, HOME_URL, POPULAR_URL, SEARCH_URL
+        from rdt_cli.constants import ALL_URL, HOME_URL, POPULAR_URL
         assert HOME_URL.endswith(".json")
         assert POPULAR_URL.endswith(".json")
         assert ALL_URL.endswith(".json")
-        assert SEARCH_URL.endswith(".json")
+
+    def test_search_uses_api_host(self):
+        from rdt_cli.constants import SEARCH_URL, SUBREDDIT_SEARCH_URL
+        assert SEARCH_URL == "https://api.reddit.com/search"
+        assert SUBREDDIT_SEARCH_URL.format(subreddit="python") == "https://api.reddit.com/r/python/search"
 
 
 # ── Credential ──────────────────────────────────────────────────────
@@ -236,68 +229,26 @@ class TestCredential:
         assert "a=1" in header
         assert "b=2" in header
 
-    def test_save_and_load(self, tmp_path, monkeypatch):
-        from rdt_cli import auth
-        monkeypatch.setattr(auth, "CONFIG_DIR", tmp_path)
-        monkeypatch.setattr(auth, "CREDENTIAL_FILE", tmp_path / "cred.json")
+    def test_load_saved_file(self, tmp_path, monkeypatch):
+        import json
 
-        from rdt_cli.auth import Credential
-        cred = Credential(cookies={"reddit_session": "test_val"}, source="browser:chrome", username="spez")
-        auth.save_credential(cred)
+        from rdt_cli import auth
+        path = tmp_path / "cred.json"
+        path.write_text(json.dumps({"cookies": {"reddit_session": "test_val"}, "source": "manual", "username": "spez"}))
+        monkeypatch.setattr(auth, "CREDENTIAL_FILE", path)
 
         loaded = auth.load_credential()
         assert loaded is not None
         assert loaded.cookies["reddit_session"] == "test_val"
-        assert loaded.source == "browser:chrome"
+        assert loaded.source == "manual"
         assert loaded.username == "spez"
-        assert (tmp_path.stat().st_mode & 0o777) == 0o700
-        assert ((tmp_path / "cred.json").stat().st_mode & 0o777) == 0o600
 
-    def test_browser_cookie_filter_keeps_only_auth_cookies(self, monkeypatch):
-        from rdt_cli import auth
+    def test_package_never_reads_browser_cookies(self):
+        from pathlib import Path
 
-        class Cookie:
-            def __init__(self, name, value):
-                self.name = name
-                self.value = value
-
-        class BrowserCookie3:
-            @staticmethod
-            def chrome(domain_name):
-                assert domain_name == ".reddit.com"
-                return [Cookie("reddit_session", "session"), Cookie("tracking", "tracker")]
-
-            firefox = edge = brave = chrome
-
-        monkeypatch.setitem(sys.modules, "browser_cookie3", BrowserCookie3)
-        monkeypatch.setattr(auth, "save_credential", lambda credential: None)
-
-        cred = auth._extract_direct()
-
-        assert cred is not None
-        assert cred.cookies == {"reddit_session": "session"}
-
-    def test_subprocess_extraction_uses_installed_python_and_filters_output(self, monkeypatch):
-        from rdt_cli import auth
-
-        completed = type(
-            "Completed",
-            (),
-            {
-                "returncode": 0,
-                "stdout": '{"reddit_session": "session", "tracking": "tracker"}',
-            },
-        )()
-        run = patch("rdt_cli.auth.subprocess.run", return_value=completed)
-        monkeypatch.setattr(auth, "save_credential", lambda credential: None)
-
-        with run as mock_run:
-            cred = auth._extract_subprocess()
-
-        assert cred is not None
-        assert cred.cookies == {"reddit_session": "session"}
-        assert mock_run.call_args.args[0][0] == sys.executable
-        assert "uv" not in mock_run.call_args.args[0]
+        import rdt_cli
+        sources = "\n".join(p.read_text() for p in Path(rdt_cli.__file__).parent.rglob("*.py"))
+        assert "browser_cookie3" not in sources
 
     def test_open_url_uses_webbrowser_without_a_shell(self):
         from rdt_cli.commands._common import open_url

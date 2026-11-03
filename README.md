@@ -18,7 +18,7 @@ A CLI for Reddit — browse feeds, read posts, search, and interact via reverse-
 
 ## Features
 
-- 🔐 **Auth** — auto-extract browser cookies, status check, whoami
+- 🔐 **Auth** — cookies from env vars or a hand-filled credential file (never read from browsers), status check, whoami
 - 🏠 **Feed** — browse home feed, popular, /r/all, and subscription-only feed (`--subs-only`)
 - 📋 **Subreddits** — browse any subreddit with sort/time filters, view subreddit info
 - 📰 **Posts** — read posts and comment trees with syntax highlighting
@@ -64,7 +64,7 @@ uv sync
 
 ```bash
 # ─── Auth ─────────────────────────────────────────
-rdt login                             # Extract cookies from browser
+rdt login                             # Show how to provide cookies
 rdt status                            # Check login status
 rdt status --json                     # Structured JSON envelope
 rdt whoami                            # Detailed profile (karma, account age)
@@ -133,19 +133,16 @@ All Reddit state changes are blocked by default. `upvote`, `save`, `subscribe`, 
 
 ## Authentication
 
-rdt-cli resolves credentials in priority order:
+This fork never reads browser cookie stores. rdt-cli resolves credentials in priority order:
 
-1. **Environment variables** — `RDT_COOKIE` / `RDT_SESSION` (see below); never touches your browser
-2. **Saved cookies** — loads from `~/.config/rdt-cli/credential.json`
-3. **Browser cookies** — *last resort*: auto-detects installed browsers and extracts cookies (Chrome, Firefox, Edge, Brave)
+1. **Environment variables** — `RDT_COOKIE` / `RDT_SESSION` (see below)
+2. **Saved cookies** — `~/.config/rdt-cli/credential.json` (mode 600), filled by hand
 
-`rdt login` tries the saved credential, then falls back to browser extraction.
-
-> **Public commands run anonymously.** Read-only commands (`popular`, `all`, `sub`, `sub-info`, `user`, `user-posts`, `user-comments`, `search`, `export`, `read`, `show`) never read your browser's cookie database. They use a saved credential if one already exists, otherwise they run unauthenticated. Run `rdt login` once to browse these authenticated (e.g., for NSFW visibility or personalized ranking). Only commands that require an account (`feed`, `saved`, `upvoted`, `upvote`, `save`, `subscribe`, `comment`) fall back to browser cookie extraction.
+Only `reddit_session` is required. `csrf_token` and `modhash` are sent when present; every other cookie is dropped before a request. `rdt login` prints these options.
 
 ### Cookies via environment variables (no browser access)
 
-If you'd rather rdt-cli **not read your browser's cookie database**, supply cookies yourself. These take priority over the saved file and browser extraction, and are read fresh each run (never written to disk):
+Env vars take priority over the saved file and are read fresh each run (never written to disk):
 
 | Variable | Description |
 |---|---|
@@ -155,17 +152,17 @@ If you'd rather rdt-cli **not read your browser's cookie database**, supply cook
 
 **Getting your cookie manually** — Reddit now requires a browser-established session even for "public" reads (a plain HTTP client is blocked by Reddit's anti-bot), so copy the cookie your browser already has:
 
-1. Open **reddit.com** in your browser — **logged in** (recommended: `reddit_session` lasts weeks and enables write actions) or logged out (anonymous, read-only; the anonymous token expires in ~a day).
+1. Open **reddit.com** in your browser, logged in (`reddit_session` lasts months).
 2. Open **DevTools** — `F12` or `⌥⌘I` (macOS) — and select the **Network** tab.
 3. Load `https://www.reddit.com/r/popular.json` (or reload any reddit page).
 4. Click the top request → **Headers** → **Request Headers** → select the whole **`cookie:`** value and copy it.
-   - *Alternative:* **Application/Storage → Cookies → `https://www.reddit.com`** lists cookies individually; the ones that matter are `reddit_session` (logged in) or `token_v2` / `loid` / `edgebucket` (anonymous).
+   - *Alternative:* **Application/Storage → Cookies → `https://www.reddit.com`** lists cookies individually; the one that matters is `reddit_session`.
 
 **Setting the env var** — use **single quotes** (the value contains `;`, `=`, `%`):
 
 ```bash
 # Recommended: the whole cookie header (zsh — macOS default)
-export RDT_COOKIE='loid=...; edgebucket=...; token_v2=...; reddit_session=...'
+export RDT_COOKIE='reddit_session=...; csrf_token=...'
 echo "export RDT_COOKIE='...'" >> ~/.zshrc && source ~/.zshrc   # persist
 # bash: append to ~/.bashrc instead of ~/.zshrc
 
@@ -183,9 +180,9 @@ rdt popular -n 5  # → posts
 
 > The logged-in cookie is an account credential — treat it like a password; don't commit or share it (`~/.zshrc` stores it in plaintext).
 
-### Cookie TTL
+### Search endpoint
 
-Saved cookies are valid for **7 days** by default. After that, the client automatically attempts to refresh from the browser. If browser extraction fails, the existing cookies are used with a warning.
+Reddit answers `403 Blocked` to `/search.json` on `www` and `old.reddit.com` (upstream issue #27), so `rdt search` and `rdt export` query `https://api.reddit.com/search`, which returns the same Listing JSON. Requests may go only to `www.reddit.com` and `api.reddit.com` over HTTPS.
 
 ### Short-Index Navigation
 
@@ -264,7 +261,7 @@ rdt_cli/
 ├── __main__.py           # python -m rdt_cli entry point
 ├── cli.py                # Click entry point & command registration
 ├── client.py             # Reddit API client (rate-limit, retry, anti-detection)
-├── auth.py               # Cookie authentication + TTL refresh
+├── auth.py               # Cookie credential chain (env, saved file)
 ├── constants.py          # URLs, headers, sort options
 ├── exceptions.py         # Error hierarchy (6 exception types)
 ├── index_cache.py        # Short-index cache for show/open commands

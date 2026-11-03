@@ -14,6 +14,8 @@ ENV_MODHASH = "RDT_MODHASH"  # optional: modhash (enables write actions)
 # ── Base URL ────────────────────────────────────────────────────────
 BASE_URL = "https://www.reddit.com"
 OAUTH_URL = "https://oauth.reddit.com"
+API_URL = "https://api.reddit.com"
+ALLOWED_HOSTS = frozenset({"www.reddit.com", "api.reddit.com"})
 
 # ── Reddit JSON API ─────────────────────────────────────────────────
 # Reddit's public JSON API: append .json to any URL
@@ -34,9 +36,10 @@ POST_COMMENTS_URL = "/r/{subreddit}/comments/{post_id}.json"
 POST_COMMENTS_SHORT_URL = "/comments/{post_id}.json"
 MORECHILDREN_URL = "/api/morechildren.json"
 
-# Search
-SEARCH_URL = "/search.json"
-SUBREDDIT_SEARCH_URL = "/r/{subreddit}/search.json"
+# Search: Reddit answers 403 "Blocked" to /search.json on www and old.reddit
+# (public-clis/rdt-cli#27); api.reddit.com serves the same Listing JSON.
+SEARCH_URL = f"{API_URL}/search"
+SUBREDDIT_SEARCH_URL = f"{API_URL}/r/{{subreddit}}/search"
 
 # User
 USER_ABOUT_URL = "/user/{username}/about.json"

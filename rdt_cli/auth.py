@@ -1,9 +1,7 @@
 """Authentication for Reddit CLI.
 
-Strategy:
-1. Try loading saved credential from ~/.config/rdt-cli/credential.json
-2. Try extracting cookies from local browsers via browser-cookie3
-3. No QR login — Reddit uses OAuth/cookie-based auth only
+Credential chain: environment variables, then ~/.config/rdt-cli/credential.json.
+This fork never reads browser cookie stores.
 """
 
 from __future__ import annotations
@@ -11,28 +9,17 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
-import sys
-import tempfile
 import time
 from typing import Any
 
 from .constants import (
-    AUTH_COOKIE_NAMES,
-    CONFIG_DIR,
     CREDENTIAL_FILE,
     ENV_COOKIE,
     ENV_MODHASH,
     ENV_SESSION,
-    REQUIRED_COOKIES,
 )
 
 logger = logging.getLogger(__name__)
-
-# Credential TTL: attempt refresh after 7 days
-CREDENTIAL_TTL_DAYS = 7
-_CREDENTIAL_TTL_SECONDS = CREDENTIAL_TTL_DAYS * 86400
-
 
 # ── Credential data class ───────────────────────────────────────────
 
@@ -90,28 +77,8 @@ class Credential:
 # ── Persistence ─────────────────────────────────────────────────────
 
 
-def save_credential(credential: Credential) -> None:
-    """Save credential to disk with restricted permissions."""
-    CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    CONFIG_DIR.chmod(0o700)
-    if credential.saved_at is None:
-        credential.saved_at = time.time()
-    payload = json.dumps(credential.to_dict(), indent=2, ensure_ascii=False)
-    fd, temp_name = tempfile.mkstemp(prefix=".credential-", suffix=".tmp", dir=CONFIG_DIR)
-    try:
-        with os.fdopen(fd, "w") as temp_file:
-            temp_file.write(payload)
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-        os.chmod(temp_name, 0o600)
-        os.replace(temp_name, CREDENTIAL_FILE)
-    finally:
-        if os.path.exists(temp_name):
-            os.unlink(temp_name)
-
-
 def load_credential() -> Credential | None:
-    """Load saved credential with TTL-based auto-refresh."""
+    """Load the saved credential file."""
     if not CREDENTIAL_FILE.exists():
         return None
     try:
@@ -119,16 +86,6 @@ def load_credential() -> Credential | None:
         cred = Credential.from_dict(data)
         if not cred.is_valid:
             return None
-
-        # TTL check — auto-refresh if stale
-        saved_at = data.get("saved_at", 0)
-        if saved_at and (time.time() - saved_at) > _CREDENTIAL_TTL_SECONDS:
-            logger.info("Credential older than %d days, attempting browser refresh", CREDENTIAL_TTL_DAYS)
-            fresh = extract_browser_credential()
-            if fresh:
-                logger.info("Auto-refreshed credential from browser")
-                return fresh
-            logger.warning("Cookie refresh failed; using existing cookies")
 
         return cred
     except (json.JSONDecodeError, KeyError):
@@ -191,101 +148,9 @@ def extract_env_credential() -> Credential | None:
     )
 
 
-# ── Browser cookie extraction ───────────────────────────────────────
-
-
-def extract_browser_credential() -> Credential | None:
-    """Extract Reddit cookies from installed browsers.
-
-    Uses subprocess to avoid SQLite lock when browser is running.
-    """
-    cred = _extract_subprocess()
-    if cred:
-        return cred
-    return _extract_direct()
-
-
-def _extract_subprocess() -> Credential | None:
-    """Extract with the already-installed dependency in an isolated subprocess."""
-    allowed_names = repr(sorted(AUTH_COOKIE_NAMES))
-    script = f'''
-import browser_cookie3, json
-cookies = {{}}
-for browser_fn in [browser_cookie3.chrome, browser_cookie3.firefox, browser_cookie3.edge, browser_cookie3.brave]:
-    try:
-        jar = browser_fn(domain_name=".reddit.com")
-        for c in jar:
-            if c.name in {allowed_names}:
-                cookies[c.name] = c.value
-        if cookies:
-            break
-    except Exception:
-        continue
-if "reddit_session" in cookies:
-    print(json.dumps(cookies))
-'''
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            extracted = json.loads(result.stdout.strip())
-            cookies = {name: value for name, value in extracted.items() if name in AUTH_COOKIE_NAMES}
-            if any(k in cookies for k in REQUIRED_COOKIES):
-                cred = Credential(cookies=cookies, source="browser:subprocess")
-                save_credential(cred)
-                return cred
-    except Exception as e:
-        logger.debug("Subprocess extraction failed: %s", e)
-    return None
-
-
-def _extract_direct() -> Credential | None:
-    """Fallback direct extraction (may fail if browser is open)."""
-    try:
-        import browser_cookie3
-    except ImportError:
-        logger.warning("browser-cookie3 not available for direct extraction")
-        return None
-
-    for fn in [browser_cookie3.chrome, browser_cookie3.firefox, browser_cookie3.edge, browser_cookie3.brave]:
-        try:
-            jar = fn(domain_name=".reddit.com")
-            cookies = {c.name: c.value for c in jar if c.name in AUTH_COOKIE_NAMES}
-            if any(k in cookies for k in REQUIRED_COOKIES):
-                cred = Credential(cookies=cookies, source=f"browser:{fn.__name__}")
-                save_credential(cred)
-                return cred
-        except Exception:
-            continue
-    return None
-
-
 # ── Credential chain ────────────────────────────────────────────────
 
 
-def get_credential(*, allow_browser: bool = True) -> Credential | None:
-    """Resolve a credential: env → saved → browser → None.
-
-    Priority order:
-    1. Environment variables (RDT_COOKIE / RDT_SESSION) — non-invasive, highest
-       priority, read fresh each run.
-    2. Saved credential file.
-    3. Browser cookie extraction — invasive (reads the browser's cookie database)
-       and slow, so it is the last resort and is gated behind ``allow_browser``.
-       Public/optional endpoints pass ``allow_browser=False`` to avoid the browser.
-    """
-    cred = extract_env_credential()
-    if cred:
-        return cred
-    cred = load_credential()
-    if cred:
-        return cred
-    if allow_browser:
-        cred = extract_browser_credential()
-        if cred:
-            return cred
-    return None
+def get_credential() -> Credential | None:
+    """Resolve a credential: environment variables, then the saved file, else None."""
+    return extract_env_credential() or load_credential()

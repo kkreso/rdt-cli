@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from .config import RuntimeConfig
-from .constants import AUTH_COOKIE_NAMES, BASE_URL
+from .constants import ALLOWED_HOSTS, AUTH_COOKIE_NAMES, BASE_URL
 from .exceptions import (
     ForbiddenError,
     NotFoundError,
@@ -94,8 +94,8 @@ class BaseTransport:
 
     def _validate_request_target(self, url: str) -> None:
         target = self.client.base_url.join(url)
-        if target.scheme != "https" or target.host != self.client.base_url.host:
-            raise RedditApiError(f"Refusing request outside {self.client.base_url.host}")
+        if target.scheme != "https" or target.host not in ALLOWED_HOSTS:
+            raise RedditApiError(f"Refusing request to {target.host}; allowed: {sorted(ALLOWED_HOSTS)}")
 
     def request(self, method: str, url: str, **kwargs: Any) -> Any:
         self._validate_request_target(url)

@@ -15,7 +15,7 @@ from rich.console import Console
 
 from ..auth import Credential, get_credential
 from ..client import RedditClient
-from ..exceptions import RedditApiError, SessionExpiredError, error_code_for_exception
+from ..exceptions import RedditApiError, error_code_for_exception
 
 T = TypeVar("T")
 
@@ -184,20 +184,15 @@ def require_auth() -> Credential:
     if not cred:
         console.print(
             "[yellow]⚠️  Not authenticated[/yellow]. Set [bold]RDT_COOKIE[/bold] "
-            "(see README) or run [bold]rdt login[/bold]"
+            "or RDT_SESSION (see [bold]rdt login[/bold])"
         )
         sys.exit(1)
     return cred
 
 
 def optional_auth() -> Credential | None:
-    """Get a credential if one is already available, else None (for public endpoints).
-
-    Never triggers browser cookie extraction — public commands should not read
-    the browser's cookie database as a side effect. Run `rdt login` once to save
-    a credential if you want authenticated public browsing.
-    """
-    return get_credential(allow_browser=False)
+    """Get a credential if one is available, else None (for public endpoints)."""
+    return get_credential()
 
 
 def get_client(credential: Credential | None = None) -> RedditClient:
@@ -206,21 +201,9 @@ def get_client(credential: Credential | None = None) -> RedditClient:
 
 
 def run_client_action(credential: Credential | None, action: Callable[[RedditClient], T]) -> T:
-    """Run a client action with auto-retry on session expiry."""
-    try:
-        with get_client(credential) as client:
-            return action(client)
-    except SessionExpiredError:
-        # An anonymous run should never fall back to invasive browser extraction.
-        if credential is None:
-            raise
-        from ..auth import extract_browser_credential
-
-        fresh = extract_browser_credential()
-        if fresh:
-            with get_client(fresh) as client:
-                return action(client)
-        raise
+    """Run a client action."""
+    with get_client(credential) as client:
+        return action(client)
 
 
 def handle_command(

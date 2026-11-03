@@ -16,23 +16,16 @@ from ._common import (
 
 @click.command()
 def login() -> None:
-    """Extract browser cookies for Reddit authentication"""
-    from ..auth import extract_browser_credential, get_credential
+    """Explain how to provide Reddit cookies (this fork never reads browsers)"""
+    from ..auth import CREDENTIAL_FILE, get_credential
 
-    # Check if already logged in
-    cred = get_credential()
-    if cred:
+    if get_credential():
         console.print("[green]✅ Already authenticated[/green]")
         return
 
-    console.print("[dim]🔍 Searching for Reddit cookies in browsers...[/dim]")
-    cred = extract_browser_credential()
-    if cred:
-        console.print(f"[green]✅ Login successful![/green] ({len(cred.cookies)} cookies extracted)")
-    else:
-        console.print("[red]❌ No Reddit cookies found.[/red]")
-        console.print("  [dim]Set [bold]RDT_COOKIE[/bold] from your browser's cookie header (see README),[/dim]")
-        console.print("  [dim]or log into reddit.com in your browser, then retry.[/dim]")
+    console.print("[yellow]Browser cookie extraction is disabled.[/yellow] Provide the reddit_session cookie:")
+    console.print("  [dim]• export RDT_SESSION=... (or RDT_COOKIE with a full Cookie header), or[/dim]")
+    console.print(f"  [dim]• save it in {CREDENTIAL_FILE} (mode 600)[/dim]")
 
 
 @click.command()
@@ -95,7 +88,7 @@ def status(as_json: bool, as_yaml: bool) -> None:
         console.print("[yellow]⚠️  Not authenticated[/yellow]")
         if info["error"]:
             console.print(f"  [dim]{info['error']}[/dim]")
-        console.print("  [dim]Set RDT_COOKIE (see README) or run 'rdt login' to use browser cookies[/dim]")
+        console.print("  [dim]Set RDT_SESSION or RDT_COOKIE; 'rdt login' shows the options[/dim]")
 
 
 @click.command()

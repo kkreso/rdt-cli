@@ -1,14 +1,13 @@
 """Environment-variable credential source.
 
-Users who don't want the tool to read their browser's cookie database can supply
-cookies directly via env vars:
+Cookies can be supplied via env vars:
 
   RDT_COOKIE  — a full raw Cookie header ("a=1; b=2; ...")   [most robust]
   RDT_SESSION — just the reddit_session cookie value          [convenience]
   RDT_MODHASH — optional modhash (enables write actions)
 
-Env credentials take priority over the saved file and over browser extraction,
-and are used in-memory only (never written to disk).
+Env credentials take priority over the saved file and are used in-memory only
+(never written to disk).
 """
 
 from __future__ import annotations
@@ -73,7 +72,6 @@ class TestExtractEnvCredential:
         assert cred.cookies["token_v2"] == "xyz"
 
     def test_env_credential_is_not_persisted(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(auth, "CONFIG_DIR", tmp_path)
         monkeypatch.setattr(auth, "CREDENTIAL_FILE", tmp_path / "credential.json")
         monkeypatch.setenv("RDT_SESSION", "sessval")
 
@@ -82,7 +80,7 @@ class TestExtractEnvCredential:
         assert not (tmp_path / "credential.json").exists()
 
 
-# ── get_credential chain: env → saved → browser ─────────────────────
+# ── get_credential chain: env → saved ──────────────────────────────
 
 
 class TestCredentialChainPriority:
@@ -95,39 +93,13 @@ class TestCredentialChainPriority:
         assert cred.cookies["reddit_session"] == "from_env"
         assert cred.source == "env"
 
-    def test_env_used_even_when_browser_disabled(self, monkeypatch):
-        # Public commands pass allow_browser=False but should still honor env.
-        monkeypatch.setenv("RDT_SESSION", "from_env")
+    def test_saved_file_used_without_env(self, monkeypatch):
+        monkeypatch.setattr(auth, "load_credential", lambda: Credential(cookies={"reddit_session": "from_file"}))
+        assert auth.get_credential().cookies["reddit_session"] == "from_file"
+
+    def test_none_without_env_or_file(self, monkeypatch):
         monkeypatch.setattr(auth, "load_credential", lambda: None)
-
-        cred = auth.get_credential(allow_browser=False)
-        assert cred is not None and cred.cookies["reddit_session"] == "from_env"
-
-    def test_browser_is_last_resort(self, monkeypatch):
-        # No env, no saved → browser extraction runs (kept, but last).
-        monkeypatch.setattr(auth, "load_credential", lambda: None)
-        called = {"n": 0}
-
-        def spy():
-            called["n"] += 1
-            return Credential(cookies={"reddit_session": "from_browser"}, source="browser:chrome")
-
-        monkeypatch.setattr(auth, "extract_browser_credential", spy)
-
-        cred = auth.get_credential()
-        assert cred.source == "browser:chrome"
-        assert called["n"] == 1
-
-    def test_env_short_circuits_before_browser(self, monkeypatch):
-        monkeypatch.setenv("RDT_SESSION", "from_env")
-        monkeypatch.setattr(auth, "load_credential", lambda: None)
-
-        def boom():
-            raise AssertionError("browser extraction must not run when env is set")
-
-        monkeypatch.setattr(auth, "extract_browser_credential", boom)
-
-        assert auth.get_credential().source == "env"
+        assert auth.get_credential() is None
 
 
 # ── capability: anonymous (token_v2) cookies count as read ──────────
